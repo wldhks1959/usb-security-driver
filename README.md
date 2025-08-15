@@ -9,15 +9,15 @@
 ---
 
 ### **프로젝트 파일 구조**
-/usb-security-driver
-├── README.md
-└── src/
-├── drivers/
-│   ├── Kconfig.patch
-│   └── Makefile.patch
-└── usb_security/
-├── Kconfig
-├── Makefile
-└── main.c
+/usb-security-driver  
+├── README.md  
+└── src/  
+├── drivers/  
+│   ├── Kconfig.patch  
+│   └── Makefile.patch  
+└── usb_security/  
+├── Kconfig  
+├── Makefile  
+└── main.c  
 
 
