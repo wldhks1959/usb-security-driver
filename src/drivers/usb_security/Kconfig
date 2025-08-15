@@ -1,0 +1,4 @@
+config USB_SECURITY_DRIVER
+	tristate "Custom USB Security Keyring Driver"
+	depends on USB
+	default n

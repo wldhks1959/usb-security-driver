@@ -1,0 +1,1 @@
+obj-$(CONFIG_USB_SECURITY_DRIVER):=main.o
