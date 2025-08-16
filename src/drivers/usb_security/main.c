@@ -6,6 +6,15 @@
 #include <linux/device.h> // class_create, device_create
 #include <linux/slab.h> // for kzalloc
 #include <linux/printk.h>
+#include <linux/uaccess.h> // for copy_from_user
+#include <linux/ioctl.h> // for ioctl
+
+// ioctl cmd definition
+#define IOC_MAGIC 'K'
+#define SET_PASSWORD _IOW(IOC_MAGIC, 0, void*)
+#define VERIFY_PASSWORD _IOW(IOC_MAGIC, 1, void*)
+#define RESET_PASSWORD _IO(IOC_MAGIC, 2)
+#define MAX_PASSWORD_LEN 32
 
 #define DRIVER_NAME "custom_usb_security"
 #define DEVICE_NAME "keyringctl"
@@ -17,11 +26,14 @@
 static dev_t dev_num;
 static struct class* custom_class = NULL;
 
-// USB 장치별 정보를 담을 구초제 (나중에 비밀번호 저장소로 확장)
+// USB 장치별 정보를 담을 구조체
 struct custom_dev {
 	struct usb_device *udev;
 	struct usb_interface *interface;
 	struct cdev custom_cdev;
+	// 비밀번호 저장소 추가
+	char password[MAX_PASSWORD_LEN];
+	bool is_locked;
 };
 
 // character device driver function
@@ -38,18 +50,63 @@ static int custom_device_release(struct inode *inode, struct file *file){
 	return 0;
 }
 
-// read, write, ioctl 등은 다음 단계에서 구현
+// ioctl 명령을 처리하는 함수
+static long custom_device_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
+	struct custom_dev *dev = file->private_data;
+	char user_password[MAX_PASSWORD_LEN];
+	int retval = 0;
+	
+	switch(cmd) {
+		case SET_PASSWORD:
+			if(copy_from_user(user_password, (char*)arg, MAX_PASSWORD_LEN)){
+				retval = -EFAULT;
+			} else {
+				memcpy(dev->password, user_password, MAX_PASSWORD_LEN);
+				dev->is_locked=true;
+				printk(KERN_INFO "%s: Password set and device locked.\n", DRIVER_NAME);
+			}
+			break;
+
+		case VERIFY_PASSWORD:
+			if(!dev->is_locked){
+				printk(KERN_INFO "%s: Device is not locked.\n", DRIVER_NAME);
+				retval = -EPERM;
+			} else {
+				if(copy_from_user(user_password, (char*)arg, MAX_PASSWORD_LEN)){
+					retval = -EFAULT;
+				} else if (memcmp(dev->password, user_password, MAX_PASSWORD_LEN)==0){
+					printk(KERN_INFO "%s: Password verified. Device unlocked.\n", DRIVER_NAME);
+					dev->is_locked = false;
+				} else {
+					printk(KERN_INFO "%s: Password verification failed.\n", DRIVER_NAME);
+					retval = -EACCES;
+				}
+			}
+			break;
+		
+		case RESET_PASSWORD:
+			memset(dev->password, 0, MAX_PASSWORD_LEN);
+			dev->is_locked = false;
+			printk(KERN_INFO "%s: Password reset. Device is unlocked.\n", DRIVER_NAME);
+			break;
+		
+		default:
+			retval = -EINVAL;
+			break;
+	}
+	return retval;
+}
+
+// read, write 등은 다음 단계에서 구현
 static const struct file_operations custom_fops = {
 	.owner = THIS_MODULE,
 	.open = custom_device_open,
 	.release = custom_device_release,
+	.unlocked_ioctl = custom_device_ioctl,
 };
-
-
 
 // USB Device Driver가 지원하는 Device list
 // 이 테이블의 VID와 PID를 가진 장치가 연결되면 드라이버의 probe 함수가 호출된다.
-
 static const struct usb_device_id custom_usb_table[] = {
 	{ USB_DEVICE(USB_DEV_VENDOR_ID, USB_DEV_PRODUCT_ID) },
 	{ } // 테이블의 끝을 알리는 빈 엔트리
@@ -83,6 +140,7 @@ static int custom_probe(struct usb_interface *interface, const struct usb_device
 	dev->udev = udev;
 	dev->interface = interface;
 	usb_set_intfdata(interface, dev);
+	dev->is_locked = false;
 
 	// cdev init and add
 	cdev_init(&dev->custom_cdev, &custom_fops);
@@ -165,9 +223,10 @@ static void __exit custom_exit(void){
 	// 디바이스 클래스 제거
 	if(custom_class)	
 		class_destroy(custom_class);
-	printk(KERN_INFO "%s: 모듈을 언로드한다.\n", DRIVER_NAME);
+
 	// 디바이스 번호 등록 해제
 	unregister_chrdev_region(dev_num, 1);	 
+	printk(KERN_INFO "%s: 모듈을 언로드한다.\n", DRIVER_NAME);
 	printk(KERN_INFO "%s: USB 드라이버가 등록 해제되었다.\n", DRIVER_NAME);
 }
 
